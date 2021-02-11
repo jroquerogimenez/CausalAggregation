@@ -1,8 +1,9 @@
+import copy
 import numpy as np
 import scipy as sp
 import cvxpy as cp
 from sklearn.linear_model import LinearRegression
-from generateEnvironment import GenerateEnvironment
+from generateEnvironment import GenerateEnvironment, generate_constraints, compute_residual_variance
 
 
 class SolveProblem(GenerateEnvironment):
@@ -27,7 +28,9 @@ class SolveProblem(GenerateEnvironment):
         return M, Z, proj_M
 
 
-    def compute_beta(self, M, Z):
+    def compute_beta(self, list_environments):
+
+        M, Z, _ = self.combine_constraints(list_environments)
 
         # If as many constraints as covariates, compute beta.
         assert M.shape[0]==M.shape[1]
@@ -41,7 +44,7 @@ class SolveProblem(GenerateEnvironment):
         M, Z, _ = self.combine_constraints(list_environments)
         M_T_inv = np.linalg.inv(M.T)
 
-        beta_hat = self.compute_beta(M, Z)
+        beta_hat = self.compute_beta(list_environments)
 
         for env in list_environments:
             self.compute_residual_variance(env, beta_hat)
@@ -60,25 +63,67 @@ class SolveProblem(GenerateEnvironment):
         return asymptotic_cov, CI
 
 
-    def solve_problem(self, lmbda, list_environments, n_samples):
+    def solve_problem(self, lmbda, list_environments, obs_environment):
 
         M, Z, proj_M = self.combine_constraints(list_environments)
 
         beta = cp.Variable(shape=self.x_dim, name='beta')
 
-        obs_dataset = self.generate_intervention(n_samples, {})['dataset']
+        obs_dataset = obs_environment['dataset']
         projected_obs_residual = proj_M @ obs_dataset[self.x_indices, :].dot(obs_dataset.T)/obs_dataset.shape[1]
+        projected_obs_residual = projected_obs_residual[:,self.x_indices] @ beta - projected_obs_residual[:,self.y_index]
         
-        constraint_list = [cp.norm(beta @ M - Z, 'inf') <= lmbda]
-
-        constraint_list.append(cp.norm(projected_obs_residual[:,self.x_indices] @ beta - projected_obs_residual[:,self.y_index], 'inf') <= lmbda)
-
-        objective_function = cp.norm(beta,1)
-        objective = cp.Minimize(objective_function)
+        objective = cp.Minimize(cp.norm(beta,1))
+        constraint_list = [cp.norm(beta @ M - Z, 'inf') <= lmbda, cp.norm(projected_obs_residual, 'inf') <= lmbda]
 
         problem = cp.Problem(objective, constraint_list)
         problem.solve(solver='MOSEK')
 
         return problem
+
+
+    def solve_problem_CV(self, list_environments, obs_environment, n_splits=4):
+
+        list_lmbdas = np.exp(np.log(10)*np.arange(-3,2,0.2))
+        val = []
+
+        for lmbda in list_lmbdas:
+            val.append(self.solve_problem_lmbda(lmbda, list_environments, obs_environment))
+
+        self.selected_lmbda = list_lmbdas[np.argmin(val)]
+
+        return self.solve_problem(self.selected_lmbda, list_environments, obs_environment)
+
+
+    def solve_problem_lmbda(self, lmbda, list_environments, obs_environment, n_splits=4):
+
+        loss = 0
+        for k in np.arange(n_splits):
+            list_environments_split = []
+            for environment in list_environments:
+                n_samples = environment['dataset'].shape[1]
+                split_indices = np.arange((n_samples//n_splits)*k, (n_samples//n_splits)*(k+1))
+
+                environment_split = copy.deepcopy(environment)
+                environment_split['dataset'] = environment['dataset'][:,split_indices]
+
+                generate_constraints(environment_split)
+                list_environments_split.append(environment_split)
+
+            obs_environment_split = copy.deepcopy(obs_environment)
+            n_samples = obs_environment['dataset'].shape[1]
+            split_indices = np.arange((n_samples//n_splits)*k, (n_samples//n_splits)*(k+1))
+
+            obs_environment_split['dataset'] = obs_environment['dataset'][:,split_indices]
+
+
+            problem = self.solve_problem(lmbda, list_environments_split, obs_environment_split)
+            loss += np.mean([compute_residual_variance(environment, problem.variables()[0].value)
+						   	for environment in list_environments_split])
+
+        return loss/n_splits
+
+
+
 
 

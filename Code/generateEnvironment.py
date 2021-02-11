@@ -19,7 +19,7 @@ class GenerateEnvironment(object):
 
     def generate_intervention(self, n_samples, dict_interventions):
 
-        output = {}
+        environment = {}
 
         # Create a copy of the connectivity matrix.
         int_connectivity = np.copy(self.obs_connectivity)
@@ -38,31 +38,17 @@ class GenerateEnvironment(object):
         eps = self.generate_epsilon(n_samples)
         dataset = np.linalg.inv(np.eye(self.n_dim) - int_connectivity).dot(eps)
 
-        # Build orthogonality vectors.
-        array_constraints = np.empty((self.n_dim,0))
-        variance_constraints = []
-        for index, intervention in dict_interventions.items():
-            if intervention['type']=='independent':
-                orth_var=dataset[index,:].reshape(-1,1)
-            if intervention['type']=='iv':
-                orth_var=dataset[intervention['iv_index'],:].reshape(-1,1) 
-            if intervention['type']=='parental':
-                lr = LinearRegression()
-                lr.fit(dataset[intervention['parental_index'],:].T, dataset[index,:])
-                orth_var=(dataset[index,:]-dataset[intervention['parental_index'],:].T.dot(lr.coef_)).reshape(-1,1)
-              
-            new_constraint = dataset.dot(orth_var)/dataset.shape[1]
-            array_constraints = np.hstack([array_constraints, new_constraint])
-            variance_constraints.append(np.std(orth_var)**2)
-                
         # dataset shape: (n_dim, n_samples)
-        output['dataset'] = dataset
-        output['dict_interventions'] = dict_interventions
-        # constraint shape: (n_dim, n_constraints)
-        output['constraints'] = array_constraints
-        output['variance_constraints'] = variance_constraints
+        environment['dataset'] = dataset
+        environment['dict_interventions'] = dict_interventions
+        environment['x_indices'] = self.x_indices
+        environment['y_index'] = self.y_index
 
-        return output
+        generate_constraints(environment)
+
+        return environment
+
+
 
 
     def compute_residual_variance(self, environment, beta_hat):
@@ -96,3 +82,37 @@ class GenerateEnvironment(object):
     def generate_epsilon(self, n_samples):
         return np.random.normal(size=(self.n_dim, n_samples))
 
+
+def generate_constraints(environment):
+
+    # Build orthogonality vectors.
+    array_constraints = np.empty((environment['dataset'].shape[0],0))
+    variance_constraints = []
+    dataset = environment['dataset']
+    for index, intervention in environment['dict_interventions'].items():
+        if intervention['type']=='independent':
+            orth_var=dataset[index,:].reshape(-1,1)
+        if intervention['type']=='iv':
+            orth_var=dataset[intervention['iv_index'],:].reshape(-1,1) 
+        if intervention['type']=='parental':
+            lr = LinearRegression()
+            lr.fit(dataset[intervention['parental_index'],:].T, dataset[index,:])
+            orth_var=(dataset[index,:]-dataset[intervention['parental_index'],:].T.dot(lr.coef_)).reshape(-1,1)
+          
+        new_constraint = dataset.dot(orth_var)/dataset.shape[1]
+        array_constraints = np.hstack([array_constraints, new_constraint])
+        variance_constraints.append(np.std(orth_var)**2)
+            
+    # constraint shape: (n_dim, n_constraints)
+    environment['constraints'] = array_constraints
+    environment['variance_constraints'] = variance_constraints
+
+
+def compute_residual_variance(environment, beta_hat):
+
+    # Compute the residual variance within an environment of a linear fit with
+    # a regression coefficient beta_hat.
+    dataset = environment['dataset']
+
+    return np.sum(np.square(beta_hat.dot(dataset[environment['x_indices'],:]) -
+        dataset[environment['y_index'],:]))/dataset.shape[1]
