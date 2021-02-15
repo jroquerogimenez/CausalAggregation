@@ -43,6 +43,7 @@ class GenerateEnvironment(object):
         environment['dict_interventions'] = dict_interventions
         environment['x_indices'] = self.x_indices
         environment['y_index'] = self.y_index
+        environment['n_samples'] = dataset.shape[1]
 
         generate_constraints(environment)
 
