@@ -32,10 +32,14 @@ class SolveProblem(GenerateEnvironment):
         return M, Z
 
 
-    def compute_beta(self, list_environments, reweighting_matrix):
+    def compute_beta(self, list_environments, reweighting_matrix=None):
 
         M, Z = self.combine_constraints(list_environments)
         
+        if reweighting_matrix is None:
+            assert M.shape[0]==M.shape[1]
+            reweighting_matrix=np.eye(M.shape[0])
+
         beta = np.linalg.inv(M.dot(reweighting_matrix).dot(M.T)).dot(M.dot(reweighting_matrix).dot(Z))
 
         return beta
@@ -56,7 +60,7 @@ class SolveProblem(GenerateEnvironment):
         return np.diag(S)
 
 
-    def compute_aCov(self, list_environments, reweighting_matrix):
+    def compute_aCov(self, list_environments, reweighting_matrix=None):
 
         M, Z = self.combine_constraints(list_environments)
         beta_hat = self.compute_beta(list_environments, reweighting_matrix=reweighting_matrix)

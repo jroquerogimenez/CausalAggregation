@@ -20,6 +20,7 @@ class GenerateEnvironment(object):
     def generate_intervention(self, n_samples, dict_interventions):
 
         environment = {}
+        eps = self.generate_epsilon(n_samples)
 
         # Create a copy of the connectivity matrix.
         int_connectivity = np.copy(self.obs_connectivity)
@@ -29,13 +30,15 @@ class GenerateEnvironment(object):
             assert index in self.x_indices, 'Invalid intervention'
             if intervention['type']=='independent':
                 int_connectivity[index,:] = 0
+            if intervention['type']=='do-zero':
+                int_connectivity[index,:] = 0
+                eps[index,:] = 0
             if intervention['type']=='iv':
                 int_connectivity[index, intervention['iv_index']]=1
             if intervention['type']=='parental':
                 pass
 
         # Generate dataset.
-        eps = self.generate_epsilon(n_samples)
         dataset = np.linalg.inv(np.eye(self.n_dim) - int_connectivity).dot(eps)
 
         # dataset shape: (n_dim, n_samples)
@@ -93,6 +96,8 @@ def generate_constraints(environment):
     for index, intervention in environment['dict_interventions'].items():
         if intervention['type']=='independent':
             orth_var=dataset[index,:].reshape(-1,1)
+        if intervention['type']=='do-zero':
+            orth_var=np.zeros_like(dataset[index,:].reshape(-1,1))
         if intervention['type']=='iv':
             orth_var=dataset[intervention['iv_index'],:].reshape(-1,1) 
         if intervention['type']=='parental':

@@ -26,11 +26,7 @@ class SolveProblem(GenerateEnvironment):
         # Z shape: n_constraints,
         Z = stacked_constraints[self.y_index,:]
         # proj_M shape: (x_dim, x_dim)
-#        if not sample_size_rescaled:
-#            proj_M = np.eye(M.shape[0]) - M.dot(np.linalg.inv(M.T.dot(M)).dot(M.T))
-#        else:
-#            proj_M=None
-        proj_M=None
+        proj_M = np.eye(M.shape[0]) - M.dot(np.linalg.inv(M.T.dot(M)).dot(M.T))
 
         # Multiply by the sample proportions.
         if sample_size_rescaled:
@@ -38,78 +34,6 @@ class SolveProblem(GenerateEnvironment):
             Z = Z.dot(stacked_sample_prop)/np.sum(stacked_sample_prop)
 
         return M, Z, proj_M
-
-
-    def compute_beta_GMM(self, list_environments):
-
-        # Compute first-step estimator:
-        sample_residual_cov = self.compute_sample_residual_cov(list_environments,
-								  np.eye(np.sum([env['constraints'].shape[1] for env in list_environments])))
-
-        beta = self.compute_beta(list_environments, 
-								 np.linalg.inv(sample_residual_cov))
-
-        aCov = self.compute_aCov(list_environments, 
-								 np.linalg.inv(sample_residual_cov))
-
-        return beta, aCov
-
-    def compute_beta(self, list_environments, reweighting_matrix = None):
-
-        if reweighting_matrix is None:
-            M, Z, _ = self.combine_constraints(list_environments)
-        else:
-            M, Z, _ = self.combine_constraints(list_environments, sample_size_rescaled=True)
-        
-        # If as many constraints as covariates, compute beta.
-        if reweighting_matrix is None:
-            assert M.shape[0]==M.shape[1]
-            beta = np.linalg.inv(M.T).dot(Z)
-        # Otherwise has more constraints than covariates and a reweighting matrix.
-        else:
-            beta = np.linalg.inv(M.dot(reweighting_matrix).dot(M.T)).dot(M.dot(reweighting_matrix).dot(Z))
-
-        return beta
-
-
-    def compute_sample_residual_cov(self, list_environments, reweighting_matrix = None):
-
-        beta_hat = self.compute_beta(list_environments, reweighting_matrix=reweighting_matrix)
-
-        for env in list_environments:
-            self.compute_residual_variance(env, beta_hat)
-
-        residual_var = np.hstack([[env['residual_var']]*env['constraints'].shape[1] for env in list_environments])
-        constraints_var = np.hstack([np.array(env['variance_constraints'])/env['dataset'].shape[1] for env in list_environments])
-        n_samples_tot = np.sum([env['dataset'].shape[1] for env in list_environments])
-
-        S = constraints_var*residual_var*n_samples_tot
-
-        return np.diag(S)
-
-
-    def compute_aCov(self, list_environments, reweighting_matrix = None):
-
-#        if reweighting_matrix is None:
-#            M, Z, _ = self.combine_constraints(list_environments)
-#        else:
-#            M, Z, _ = self.combine_constraints(list_environments, sample_size_rescaled=True)
-
-        M, Z, _ = self.combine_constraints(list_environments)
-        S = self.compute_sample_residual_cov(list_environments, reweighting_matrix=reweighting_matrix)
-
-        aCov = np.linalg.inv(M.dot(np.linalg.inv(S)).dot(M.T))
-
-        return aCov
-
-
-    def compute_CI(self, beta_hat, aCov, n_samples_tot, alpha):
-
-        v = sp.stats.norm.ppf(1-alpha/2)
-        CI = np.vstack([beta_hat - np.sqrt(np.diag(aCov))*v/np.sqrt(n_samples_tot),
-					   	beta_hat + np.sqrt(np.diag(aCov))*v/np.sqrt(n_samples_tot)])
-
-        return CI
 
 
     def solve_problem(self, lmbda, list_environments, obs_environment):
