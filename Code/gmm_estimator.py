@@ -3,6 +3,7 @@ import numpy as np
 import scipy as sp
 import cvxpy as cp
 from sklearn.linear_model import LinearRegression
+from statsmodels.regression.linear_model import OLS
 from generateEnvironment import GenerateEnvironment, generate_constraints, compute_residual_variance
 
 
@@ -99,4 +100,13 @@ class SolveProblem(GenerateEnvironment):
 
         return CI
 
+
+    def compute_pooled_beta_OLS(self, list_environments):
+        
+        pooled_samples = np.hstack([env['dataset'] for env in list_environments])
+        n_samples_tot = np.sum([env['dataset'].shape[1] for env in list_environments])
+
+        regr=OLS(pooled_samples[self.y_index,:], pooled_samples[self.x_indices,:].T).fit()
+        
+        return regr.params, np.diag(np.square(regr.bse)*n_samples_tot)
 

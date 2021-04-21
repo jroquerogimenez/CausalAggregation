@@ -6,58 +6,83 @@ from sklearn.linear_model import LinearRegression
 from generateEnvironment import GenerateEnvironment, generate_constraints, compute_residual_variance
 
 
-class SolveProblem(GenerateEnvironment):
+class SolveProblemRegularized(GenerateEnvironment):
 
     def __init__(self, obs_connectivity, x_indices, y_index):
         super().__init__(obs_connectivity, x_indices, y_index)
 
 
-    def combine_constraints(self, list_environments, sample_size_rescaled=False):
+    def combine_constraints(self, list_environments):
         
         stacked_constraints = np.empty((self.n_dim, 0))
 
         stacked_constraints = np.hstack([env['constraints'] for env in list_environments])
 
-        stacked_sample_prop = np.diag(np.hstack([[env['n_samples']]*env['constraints'].shape[1]
-											   	for env in list_environments]))
+        n_samples_prop = np.hstack([[env['n_samples']]*env['constraints'].shape[1] for env in list_environments])
+        n_samples_prop = n_samples_prop/np.sum([env['n_samples'] for env in list_environments])
 
         # M shape: (x_dim, n_constraints)
         M = stacked_constraints[self.x_indices,:]
         # Z shape: n_constraints,
         Z = stacked_constraints[self.y_index,:]
-        # proj_M shape: (x_dim, x_dim)
-        proj_M = np.eye(M.shape[0]) - M.dot(np.linalg.inv(M.T.dot(M)).dot(M.T))
 
         # Multiply by the sample proportions.
-        if sample_size_rescaled:
-            M = M.dot(stacked_sample_prop)/np.sum(stacked_sample_prop)
-            Z = Z.dot(stacked_sample_prop)/np.sum(stacked_sample_prop)
+        M = M.dot(np.diag(n_samples_prop))
+        Z = Z.dot(np.diag(n_samples_prop))
 
-        return M, Z, proj_M
+        proj_M_orth = np.eye(M.shape[0]) - M @ np.linalg.inv(M.T @ M) @ M.T
+
+        return M, Z, proj_M_orth
+
+
+
+    def compute_sample_residual_cov(self, list_environments, beta_hat):
+
+        for env in list_environments:
+            self.compute_residual_variance(env, beta_hat)
+
+        residual_var = np.hstack([[env['residual_var']]*env['constraints'].shape[1] for env in list_environments])
+        constraints_var = np.hstack([np.array(env['variance_constraints']) for env in list_environments])
+        n_samples_prop = np.hstack([[env['n_samples']]*env['constraints'].shape[1] for env in list_environments])
+        n_samples_prop = n_samples_prop/np.sum([env['n_samples'] for env in list_environments])
+
+        S = constraints_var*residual_var*n_samples_prop
+
+        return np.diag(S)
+
+
+    def evaluate_constraint_beta0(self, list_environments, obs_environment):
+        M, Z, proj_M_orth = self.combine_constraints(list_environments)
+        obs_dataset = obs_environment['dataset']
+
+        projected_obs_residual = proj_M_orth @ obs_dataset[self.x_indices, :].dot(obs_dataset.T)/obs_dataset.shape[1]
+        projected_obs_residual = projected_obs_residual[:,self.x_indices] @ self.beta - projected_obs_residual[:,self.y_index]
+
+        return np.amax(np.abs(projected_obs_residual))
 
 
     def solve_problem(self, lmbda, list_environments, obs_environment):
 
-        M, Z, proj_M = self.combine_constraints(list_environments)
+        M, Z, proj_M_orth = self.combine_constraints(list_environments)
 
         beta = cp.Variable(shape=self.x_dim, name='beta')
 
         obs_dataset = obs_environment['dataset']
-        projected_obs_residual = proj_M @ obs_dataset[self.x_indices, :].dot(obs_dataset.T)/obs_dataset.shape[1]
+        projected_obs_residual = proj_M_orth @ obs_dataset[self.x_indices, :].dot(obs_dataset.T)/obs_dataset.shape[1]
         projected_obs_residual = projected_obs_residual[:,self.x_indices] @ beta - projected_obs_residual[:,self.y_index]
         
         objective = cp.Minimize(cp.norm(beta,1))
         constraint_list = [cp.norm(beta @ M - Z, 'inf') <= lmbda, cp.norm(projected_obs_residual, 'inf') <= lmbda]
 
         problem = cp.Problem(objective, constraint_list)
-        problem.solve(solver='MOSEK')
+        problem.solve(solver='MOSEK', verbose=False)
 
         return problem
 
 
-    def solve_problem_CV(self, list_environments, obs_environment, n_splits=4):
+    def solve_problem_CV(self, list_environments, obs_environment, n_splits=4, log_min_lmbda=5):
 
-        list_lmbdas = np.exp(np.log(10)*np.arange(-3,2,0.2))
+        list_lmbdas = np.exp(np.log(10)*np.arange(-log_min_lmbda,2,0.2))
         val = []
 
         for lmbda in list_lmbdas:
