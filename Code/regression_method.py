@@ -31,34 +31,26 @@ class PolynomialRegression(LinearRegression, Ridge):
 
         regression_method = params_method.get('regression_method')
         if regression_method=='LinearRegression':
-            self.lr = LinearRegression()
+            self.lr = LinearRegression(fit_intercept=False)
         elif regression_method=='Ridge':
-            self.lr = Ridge()
+            self.lr = Ridge(fit_intercept=False)
         elif regression_method=='HuberRegressor':
-            self.lr = HuberRegressor()
-
-        self.power_features = self.params_method.get('power_features')[self.env_key]
-        self.interaction_only = self.params_method.get('interactions_env')[self.env_key]=='int'
-        self.include_bias = self.params_method.get('include_bias')[self.env_key]
+            self.lr = HuberRegressor(fit_intercept=False)
 
         self.poly = PolynomialFeatures(
-            degree=self.power_features,
-            include_bias=self.include_bias,
-            interaction_only=self.interaction_only,
+            degree=self.params_method.get('power_features')[self.env_key]
             )
         
 
     def fit(self, X, Y):
-
-        self.truncate_column = int(self.interaction_only*X.shape[1] + self.include_bias*1.)
-        X_extended = self.poly.fit_transform(X)[:,self.truncate_column:]
+        _ = self.poly.fit(X)
+        self.set_feature_choices(self.params_method.get('selected_features')[self.env_key])
+        X_extended = self.poly.transform(X)[:,self.selected_indices]
         self.lr.fit(X_extended, Y)
 
 
     def predict(self, X):
-
-        X_extended = self.poly.fit_transform(X)[:,self.truncate_column:]
-
+        X_extended = self.poly.fit_transform(X)[:,self.selected_indices]
         return self.lr.predict(X_extended)
 
 
@@ -67,15 +59,27 @@ class PolynomialRegression(LinearRegression, Ridge):
     def coef_(self):
         return self.lr.coef_
 
-    def get_feature_names(self):
-        name_list = self.poly.get_feature_names()[self.truncate_column:]
-        final_list = []
+    def set_feature_choices(self, selected_features):
+        # A list of selected features contains all those interactions that we want to keep
+        # in the polynomial extension. eg. 'x1^0x2^2' refers to one term in a polynomial extension
+        # of degree at least 3, where x1 and x2 are input variables (i.e. randomized covariates)
+        name_list = self.poly.get_feature_names()
+        self.feature_names = []
+
         for elem in name_list:
-            list_vars_deg = [(self.env.data['randomized_index'][int(var[1])], (len(var)>2)*int(var[-1])) for var in elem.split(' ')]
-            final_list.append(''.join(['x{}^{}'.format(elem[0]+1, elem[1]) for elem in list_vars_deg]))
+            if elem=='1':
+                self.feature_names.append('1')
+            else:
+                list_vars_deg = [
+                    (self.env.data['randomized_index'][int(var[1])] + 1,
+                    (len(var)>2)*int(var[-1])) for var in elem.split(' ')
+                    ]
+                self.feature_names.append(''.join(['x{}^{}'.format(elem[0], elem[1]) for elem in list_vars_deg]))
 
-        return final_list
+        self.selected_indices = [self.feature_names.index(name) for name in selected_features]
 
+    def get_feature_names(self):
+        return [self.feature_names[index] for index in self.selected_indices]
 
 
 class RandomForestRegression:

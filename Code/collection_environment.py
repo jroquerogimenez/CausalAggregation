@@ -27,8 +27,10 @@ class CollectionEnvironment:
         for key in dict_interactions_env.keys():
             dict_interactions_env[key] = [env_key for env_key in list(self.env.keys()) if set(key).subset(set(self.env[env_key].randomized_index))]
 
-    def stack_data_env(self):
+    def stack_data_X_env(self):
         return np.hstack([self.env[env_key].data['X'] for env_key in list(self.env.keys())])
 
+    def stack_data_Y_env(self):
+        return np.concatenate([self.env[env_key].data['Y'] for env_key in list(self.env.keys())])
 
 

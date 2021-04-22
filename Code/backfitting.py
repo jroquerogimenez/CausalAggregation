@@ -35,7 +35,15 @@ class Backfitting(object):
         self.output_function_dict = {}
         self.output_function_merged = self.merge_output_function_dict()
 
-        self.x_train_full = self.collect_env.stack_data_env()
+        self.x_train_full = self.collect_env.stack_data_X_env()
+        self.y_train_full = self.collect_env.stack_data_Y_env()
+
+        # Initialize the models.
+        all_covariates = np.concatenate([self.params_method['selected_features'][env_key] for env_key in self.list_env_keys])
+        max_degree = np.amax([self.params_method['power_features'][env_key] for env_key in self.list_env_keys]) 
+        print(all_covariates, max_degree)
+        #for env_key in self.list_env_keys:
+            
 
         n_iter, improving, reconstruction_loss = 0, True, []
         pbar = tqdm(total=self.max_n_iter, leave=True)

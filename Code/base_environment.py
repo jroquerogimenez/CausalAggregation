@@ -122,7 +122,8 @@ class Environment(object):
 
         self.structural_equation_dict = {key: self.structural_equation_dict[key] for key in self.topo_order}
 
-        for var_key, structural_equation in self.structural_equation_dict.items():
+        for var_key in self.topo_order:
+            structural_equation = self.structural_equation_dict[var_key]
             assert np.array([
                 self.topo_order.index(input_key)<self.topo_order.index(var_key)
                 for input_key in structural_equation['input_keys']
@@ -136,7 +137,8 @@ class Environment(object):
             for var_key, sampler in self.disturbance_sampler_dict.items()}
         self.samples_dict = {}
 
-        for var_key, structural_equation in self.structural_equation_dict.items():
+        for var_key in self.topo_order:
+            structural_equation = self.structural_equation_dict[var_key]
             if len(structural_equation['input_keys'])>0:
                 input_samples = np.stack(
                     [self.samples_dict[input_key]
