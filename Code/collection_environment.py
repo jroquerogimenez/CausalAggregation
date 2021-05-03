@@ -27,10 +27,19 @@ class CollectionEnvironment:
         for key in dict_interactions_env.keys():
             dict_interactions_env[key] = [env_key for env_key in list(self.env.keys()) if set(key).subset(set(self.env[env_key].randomized_index))]
 
-    def stack_data_X_env(self):
-        return np.hstack([self.env[env_key].data['X'] for env_key in list(self.env.keys())])
+    def stack_data_X_env(self, train=False, val_fraction=0.1):
+        end_samples = {env_key: int(self.env[env_key].data['X'].shape[1]*(1-val_fraction)) for env_key in list(self.env.keys())}
+        if train:
+            return np.hstack([self.env[env_key].data['X'][:,:end_samples[env_key]] for env_key in list(self.env.keys())])
+        else:
+            return np.hstack([self.env[env_key].data['X'][:,end_samples[env_key]:] for env_key in list(self.env.keys())])
+        
 
-    def stack_data_Y_env(self):
-        return np.concatenate([self.env[env_key].data['Y'] for env_key in list(self.env.keys())])
+    def stack_data_Y_env(self, train=False, val_fraction=0.1):
+        end_samples = {env_key: int(len(self.env[env_key].data['Y'])*(1-val_fraction)) for env_key in list(self.env.keys())}
+        if train:
+            return np.concatenate([self.env[env_key].data['Y'][:end_samples[env_key]] for env_key in list(self.env.keys())])
+        else:
+            return np.concatenate([self.env[env_key].data['Y'][end_samples[env_key]:] for env_key in list(self.env.keys())])
 
 

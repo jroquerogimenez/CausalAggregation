@@ -149,11 +149,20 @@ class Environment(object):
 
             self.samples_dict[var_key] = structural_equation['structural_eq'](input_samples)
             
+
+        # From now on, the var_keys are no longer used: we output a covariate matrix X and a response Y,
+        # and the indices in X that are randomized. 
         self.data = {
             'X': np.stack([self.samples_dict[x_k] for x_k in self.x_key]),
             'Y': self.samples_dict[self.y_key],
-            'randomized_index': self.randomized_index
+            'randomized_index': self.randomized_index,
             }
+
+        orth_covariates = self.data['X'][self.randomized_index].dot(self.data['X'].T)/self.data['X'].shape[1]
+        orth_response = self.data['X'][self.randomized_index].dot(self.data['Y'])/self.data['X'].shape[1]
+
+        self.data.update({'constraints': np.hstack([orth_covariates, orth_response.reshape(-1,1)])})
+
 
 
 
@@ -185,42 +194,4 @@ class Environment(object):
         return regr.coef_
 
 
-    def generate_epsilon(self, n_samples):
-        return np.random.normal(size=(self.n_dim, n_samples))
 
-
-def generate_constraints(environment):
-
-    # Build orthogonality vectors.
-    array_constraints = np.empty((environment['dataset'].shape[0],0))
-    variance_constraints = []
-    dataset = environment['dataset']
-    for index, intervention in environment['dict_interventions'].items():
-        if intervention['type']=='independent':
-            orth_var=dataset[index,:].reshape(-1,1)
-        if intervention['type']=='do-zero':
-            orth_var=np.zeros_like(dataset[index,:].reshape(-1,1))
-        if intervention['type']=='iv':
-            orth_var=dataset[intervention['iv_index'],:].reshape(-1,1) 
-        if intervention['type']=='parental':
-            lr = LinearRegression()
-            lr.fit(dataset[intervention['parental_index'],:].T, dataset[index,:])
-            orth_var=(dataset[index,:]-dataset[intervention['parental_index'],:].T.dot(lr.coef_)).reshape(-1,1)
-          
-        new_constraint = dataset.dot(orth_var)/dataset.shape[1]
-        array_constraints = np.hstack([array_constraints, new_constraint])
-        variance_constraints.append(np.std(orth_var)**2)
-            
-    # constraint shape: (n_dim, n_constraints)
-    environment['constraints'] = array_constraints
-    environment['variance_constraints'] = variance_constraints
-
-
-def compute_residual_variance(environment, beta_hat):
-
-    # Compute the residual variance within an environment of a linear fit with
-    # a regression coefficient beta_hat.
-    dataset = environment['dataset']
-
-    return np.sum(np.square(beta_hat.dot(dataset[environment['x_indices'],:]) -
-        dataset[environment['y_index'],:]))/dataset.shape[1]
