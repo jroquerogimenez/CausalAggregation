@@ -17,6 +17,9 @@ class CollectionEnvironment:
         self.env[env_key] = self.base_env.generate_intervention(dict_interventions)    
         if n_samples is not None:
             self.env[env_key].generate_samples(n_samples)
+    
+    def reset_env(self):
+        self.env = {}
 
     def sort_env(self):
         list_randomized_index = [list(self.env[env_key].randomized_index) for env_key in list(self.env.keys())]

@@ -34,6 +34,26 @@ class Backfitting(object):
         self.true_y_coeff = true_y_coeff
 
 
+
+    def fitCV(self, collect_env, range_min=-3, range_max=0.5, range_step=0.5, print_selected=False):
+
+        validation_list = []
+        
+        hyperparam_range = np.exp(np.log(10)*np.arange(range_min, range_max, range_step))
+
+        for hyperparam in hyperparam_range:
+            self.params_method['min_impurity_decrease'] = hyperparam
+            validation_loss, oracle_loss = self.fit(collect_env)
+            validation_list.append(validation_loss)
+        
+        if print_selected:
+            print(np.argmin(validation_list), hyperparam_range[np.argmin(validation_list)])
+        self.params_method['min_impurity_decrease'] = hyperparam_range[np.argmin(validation_list)]
+
+        return self.fit(collect_env)
+
+
+
     def fit(self, collect_env):
 
         # Fit the backfitting/boosting procedure to the set of environments.
@@ -81,12 +101,10 @@ class Backfitting(object):
         self.output_function_merged = self.merge_output_function_dict()
 
         # Start iterative procedure.
-        n_iter, stopping, validation_loss = 0, False, []
+        n_iter, validation_loss, oracle_loss = 0, [], []
         shuffled_list_env_keys = self.list_env_keys.copy()
-        pbar = tqdm(total=self.max_n_iter, leave=True)
-        while (not stopping) and (n_iter<self.max_n_iter):
+        while (n_iter<self.max_n_iter):
             n_iter += 1
-            pbar.update(1)
 
             random.shuffle(shuffled_list_env_keys)
             new_output_function_dict = {}
@@ -107,6 +125,9 @@ class Backfitting(object):
 
                 # The new function is either the fitted new model or the addition of the fitted new model to the previous one.
                 new_output_function_dict.update({env_key: updated_model.predict})
+
+                self.output_model_dict.update({env_key: updated_model})
+
 
                 if self.update_within_loop:
                     def f_reweighted_boosting(weight, candidate_function, previous_function):
@@ -133,12 +154,10 @@ class Backfitting(object):
                 self.update_function_dict(new_output_function_dict)
                 self.output_function_merged = self.merge_output_function_dict()
 
-            validation_loss.append(self.evaluate_gap())
+            oracle_loss.append(self.evaluate_oracle())
+            validation_loss.append(self.evaluate_validation())
 
-
-        pbar.close()
-
-        return validation_loss
+        return validation_loss[-1], oracle_loss[-1]
 
 
     def update_function_dict(self, new_output_function_dict):
@@ -159,25 +178,30 @@ class Backfitting(object):
                     residual = env.data['Y'][:int(len(env.data['Y'])*self.training_fraction)] - self.output_function_partial(env.data['X'][:,:int(env.data['X'].shape[1]*self.training_fraction)], env_key)
  
                 predictor = np.zeros((len(residual), 0))
+                normalized_predictor = np.zeros((len(residual), 0))
                 for env_key_2 in self.list_env_keys:
                     # We use the same data from the env_key env. But we take the randomized indices to be those of env_2.
                     env_2  = self.collect_env.env[env_key_2]
                     randomized_covariates_2 = env.data['X'][env_2.data['randomized_index'],:int(env.data['X'].shape[1]*self.training_fraction)]
-                    predictor = np.hstack([predictor, new_output_function_dict[env_key_2](randomized_covariates_2.T).reshape(-1,1)])
+                    env_predictor = new_output_function_dict[env_key_2](randomized_covariates_2.T).reshape(-1,1)
+                    if np.amin(np.std(env_predictor, axis=1).reshape(-1,1))>0:
+                        normalized_env_predictor = env_predictor/np.std(env_predictor, axis=1).reshape(-1,1)
+                    else:
+                        normalized_env_predictor = env_predictor
+                    predictor = np.hstack([predictor, env_predictor])
+                    normalized_predictor = np.hstack([normalized_predictor, normalized_env_predictor])
  
-                objective = objective + cp.abs((residual - predictor @ alphas) @ predictor.T[self.list_env_keys.index(env_key)])
+                objective = objective + cp.abs((residual - predictor @ alphas) @normalized_predictor.T[self.list_env_keys.index(env_key)])
             
-            objective = cp.max(objective) 
+            objective = cp.max(objective) + cp.norm(alphas, 1)
  
             # Once loss is evaluated over all envs, solve cvx problem.
             problem = cp.Problem(cp.Minimize(objective), [])
             problem.solve()
  
             solution = problem.variables()[0].value
-#            print('reweighting values', solution, problem.value)
         else:
             solution = np.ones(len(self.list_env_keys))
-        
 
         # Once the weights are determined, update the output_function_dict for all envs.
         for env_key in self.list_env_keys:
@@ -238,18 +262,15 @@ class Backfitting(object):
         return merged_function
 
 
-    def evaluate_gap(self, x=None):
+    def evaluate_oracle(self, x=None):
         if x is None:
             x = self.x_val_full
         return np.mean(np.square(self.true_function_y(x) - self.output_function_merged(x)))
 
-    def print_val(self):
-        print('summary', np.vstack([self.x_val_full, self.true_function_y(self.x_val_full), self.y_val_full, self.output_function_merged(self.x_val_full)]).T)
 
-    def evaluate_val(self, x=None):
-        if x is None:
-            x = self.x_val_full
-        return np.mean(np.square(self.y_val_full - self.output_function_merged(x)))
+    def evaluate_validation(self):
+        return np.mean(np.square(self.y_val_full - self.output_function_merged(self.x_val_full)))
+
 
     def evaluate_l1_loss_parameter(self):
         dict_coeffs = {}
@@ -259,7 +280,44 @@ class Backfitting(object):
         l1_loss = np.sum([np.abs(diff_coef) for diff_coef in dict_diff_coeffs.values()])
         return l1_loss
 
+
     def return_results(self, x=None):
         if x is None:
             x = self.x_val_full
         return  np.vstack([self.x_val_full, self.true_function_y(x), self.y_val_full, self.output_function_merged(x)]).T
+
+
+    def fit_naive(self, collect_env):
+
+        self.collect_env = collect_env
+        self.list_env_keys = list(self.collect_env.env.keys())
+        self.true_function_y = self.collect_env.true_function_y
+
+        self.x_train_full = self.collect_env.stack_data_X_env(train=True, val_fraction=(1-self.training_fraction))
+        self.y_train_full = self.collect_env.stack_data_Y_env(train=True, val_fraction=(1-self.training_fraction))
+        self.x_val_full = self.collect_env.stack_data_X_env(train=False, val_fraction=(1-self.training_fraction))
+        self.y_val_full = self.collect_env.stack_data_Y_env(train=False, val_fraction=(1-self.training_fraction))
+
+        self.naive_model = self.regression_method(self.params_method, self.collect_env, None)
+        self.naive_model.fit(self.x_train_full.T, self.y_train_full)
+
+        oracle_loss = np.mean(np.square(self.true_function_y(self.x_val_full) - self.naive_model.predict(self.x_val_full.T)))
+        validation_loss = np.mean(np.square(self.y_val_full - self.naive_model.predict(self.x_val_full.T))) 
+
+        return validation_loss, oracle_loss
+
+
+    def fit_naiveCV(self, collect_env, range_min=-3, range_max=0.5, range_step=0.5):
+
+        validation_list = []
+        
+        hyperparam_range = np.exp(np.log(10)*np.arange(range_min, range_max, range_step))
+
+        for hyperparam in hyperparam_range:
+            self.params_method['min_impurity_decrease'] = hyperparam
+            validation_loss, oracle_loss = self.fit_naive(collect_env)
+            validation_list.append(validation_loss)
+        
+        self.params_method['min_impurity_decrease'] = hyperparam_range[np.argmin(validation_list)]
+
+        return self.fit_naive(collect_env)
